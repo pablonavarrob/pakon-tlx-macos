@@ -230,7 +230,16 @@ if ! pgrep -f pakonusb.py >/dev/null; then
     sleep 4
     grep -q "serving" "$SRVLOG" || { echo "USB server failed:"; cat "$SRVLOG"; exit 1; }
 fi
-echo "USB server: $(grep -c . "$SRVLOG") log lines, listening"
+# Say what the bridge found, in this script's own words: its log lines are
+# written for someone running pakonusb.py by hand ("start the TLX client
+# now") and read oddly here, where run.sh launches the client itself.
+if grep -q "SUCCESS: scanner is now" "$SRVLOG" 2>/dev/null; then
+    echo "USB server up: firmware loaded, scanner is operational (0f05:f135)."
+elif grep -q "scanner open (0f05:f135)" "$SRVLOG" 2>/dev/null; then
+    echo "USB server up: scanner is operational (0f05:f135)."
+else
+    echo "USB server up ($(grep -c . "$SRVLOG") log lines)."
+fi
 
 # 2. the client, from the path the OEM installer would have used, because
 #    TLB.dll and PakonImau resolve Config/, Logs/ and the Ansel data from it.
