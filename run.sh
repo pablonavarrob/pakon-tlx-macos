@@ -205,6 +205,23 @@ if ! "$PYTHON" -c "import usb1" >/dev/null 2>&1; then
     echo "ok: $PYTHON"
 fi
 
+# 0c. the OEM client initialises the scanner the moment it starts and quits with
+#     WTO_InitializeError if there is none, so look for one first: cold
+#     (0f05:f235, firmware not yet loaded) or operational (0f05:f135) both count.
+scanner_present() {
+    "$PYTHON" -c 'import usb1,sys
+with usb1.USBContext() as c:
+    ok = any(d.getVendorID() == 0x0F05 and d.getProductID() in (0xF235, 0xF135)
+             for d in c.getDeviceList())
+sys.exit(0 if ok else 1)' 2>/dev/null
+}
+if ! scanner_present; then
+    echo "No scanner on the USB bus (neither 0f05:f235 nor 0f05:f135)."
+    echo "Power it on and plug it in, then run this again. The OEM client"
+    echo "initialises the scanner as it starts and quits if there is none."
+    exit 1
+fi
+
 # 1. the scanner needs application firmware after every power cycle (it lives in
 #    RAM).  pakonusb.py says so plainly if it is missing.
 if ! pgrep -f pakonusb.py >/dev/null; then
