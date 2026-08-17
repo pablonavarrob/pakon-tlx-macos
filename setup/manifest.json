@@ -1,0 +1,59 @@
+{
+  "DMLDICELib.dll": {
+    "purpose": "Digital ICE",
+    "sha256": "1acdfbf787ac083e98e79e58589d3a950ae7d8efc20e9a205a808ea99f20c5e6",
+    "size": 241664
+  },
+  "PakonImau.dll": {
+    "purpose": "Kodak imaging / Ansel",
+    "sha256": "0ede8d9813af4ee95dddd85e5adc495a27f014a8fd4817cfbc3b3b1e107f511f",
+    "size": 7598080
+  },
+  "TLB.dll": {
+    "bytes": 536576,
+    "purpose": "the F-135 engine (this is the one we patch) [hash is the UNPATCHED original]",
+    "sha256": "5866ec56776644e23c2c7e3755b4fc097761395db5731bf242998794a6f01647",
+    "size": 536576
+  },
+  "TLXClientDemo.exe": {
+    "purpose": "the OEM client itself",
+    "sha256": "25887eccdd3c9287d9b8518f5a5e20f2a63018afe4f99c174cf2476d7b55729a",
+    "size": 106496
+  },
+  "ekjpegi.dll": {
+    "purpose": "Kodak JPEG",
+    "sha256": "c81acf0915e3cfd93a8d0a894db7e164eafb60d8cd583c275b193018bbe55d53",
+    "size": 25600
+  },
+  "kodakcms.dll": {
+    "purpose": "Kodak colour management",
+    "sha256": "4cac6899d5b365821733281e5e850bf331ad4bf45189daa17b29bb3347ff8fa8",
+    "size": 540672
+  },
+  "mfc71u.dll": {
+    "purpose": "MFC 7.1 Unicode (client UI)",
+    "sha256": "0c58f682e1b3af064963dd616e80609006e9317f2fcb0f3a51ed32fef13b1081",
+    "size": 1047552
+  },
+  "msvcp71.dll": {
+    "purpose": "VC7.1 C++ runtime",
+    "sha256": "df96156f6a548fd6fe5672918de5ae4509d3c810a57bffd2a91de45a3ed5b23b",
+    "size": 499712
+  },
+  "msvcr71.dll": {
+    "purpose": "VC7.1 CRT",
+    "sha256": "8094af5ee310714caebccaeee7769ffb08048503ba478b879edfef5f1a24fefe",
+    "size": 348160
+  },
+  "tlx.dll": {
+    "bytes": 294912,
+    "purpose": "COM wrapper the client drives [hash is the UNPATCHED original]",
+    "sha256": "f837b62a640ac05ec9f319462ceaf4d2bbce3ce49bcfef4ba4e35fa8d93e0dd8",
+    "size": 294912
+  },
+  "xerces-c_2_2_0.dll": {
+    "purpose": "XML parser PakonImau needs",
+    "sha256": "7b122bc073cfff4e45ce02fdce68a0897b4e52f195393dbaff4197d4fc3a614a",
+    "size": 1609728
+  }
+}

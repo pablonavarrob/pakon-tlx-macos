@@ -1,0 +1,6 @@
+# server (needed to actually drive the scanner)
+libusb1>=3.0
+
+# tools (optional: analysis and planar RAW reading)
+numpy>=1.24
+tifffile>=2023.1

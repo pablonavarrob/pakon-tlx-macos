@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Pablo Navarro
+Copyright (c) 2026 pakon-f135-macos contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,31 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--- NOTE ON THE KODAK/PAKON SOFTWARE ---
+
+This project contains no Kodak or Pakon code, binaries or firmware. It is an
+interoperability layer: it lets the genuine F-X35 COM Server stack, which you
+must supply from your own scanner's software, talk to a Pakon F-135 over USB
+on macOS.
+
+One exception, stated plainly rather than buried: setup/base-config.reg holds
+189 registry settings that are Kodak's configuration, not ours -- the F-135
+software's own driver flags and colour-table entries. Kodak's installer would
+write them; this project does not run that installer, so it supplies them.
+The file is unit-independent by construction: it contains no scanner serial,
+type or hardware version, and no DpiBase key, because those are read from each
+unit's EEPROM, and no light values, because those are measured by the LED servo
+on each machine. Whether TLB will write these settings itself, making the file
+unnecessary, is an open question -- see docs/SETUP.md.
+
+Protocol details in docs/ were determined by observing the behaviour of that
+software and disassembling it for interoperability purposes only.
+
+server/ezusb_stage2.ihex is the generic Cypress/Anchor EZ-USB second-stage
+RAM loader -- the 361-record loader array published in Cypress's EZ-USB
+development kit and carried in the open FX35 driver work as the
+INTEL_HEX_RECORD loader[361] table in FX35Loader/Loader.c. It is not Kodak
+code, is not specific to this scanner, and contains no calibration or
+model data. The scanner's own application firmware is never bundled here;
+it is uploaded at runtime from a file you supply.
