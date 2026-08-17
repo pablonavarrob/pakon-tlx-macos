@@ -5,6 +5,10 @@ colour science and Digital ICE — against a Pakon F-135 film scanner, natively 
 macOS including Apple Silicon. No Windows VM, no USB passthrough, no rewritten
 image pipeline.
 
+Inline-style: 
+![alt text](https://github.com/pablonavarrob/pakon-tlx-macos/blob/main/docs/screen-grab.png "View of TLX running on my Mac Mini M4")
+
+
 ```
 TLXClientDemo.exe + tlx.dll + TLB.dll + PakonImau + DMLDICELib   (unmodified OEM)
         │
