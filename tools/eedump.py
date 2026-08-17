@@ -31,7 +31,7 @@ import sys
 
 import usb1
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "server"))
 import pakonload                                          # noqa: E402
 
 VID, PID_LOADED, PID_UNLOADED = 0x0F05, 0xF135, 0xF235
