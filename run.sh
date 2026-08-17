@@ -237,4 +237,5 @@ cd "$APP" || exit 1
 nohup "$WINE" TLXClientDemo.exe > "$CLILOG" 2>&1 < /dev/null &
 disown
 echo "TLX Client launching (log: $CLILOG)"
+echo "Its window opens behind the terminal: bring it forward from the Dock."
 echo "run './run.sh log' to see what it is doing, './run.sh stop' to stop."
