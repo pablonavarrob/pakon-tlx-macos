@@ -77,9 +77,14 @@ threads, MFC, the imaging pipeline, the window itself — is the real thing.
 
 - macOS on Apple Silicon or Intel
 - Wine 11 or newer — the installer below fetches it
-- `mingw-w64` and `libusb` from Homebrew, and Python 3.9+
+- `mingw-w64` and `libusb` from Homebrew, and Python 3.10+ (the installer
+  builds a `.venv` on the first `python3` it finds; if that is an old system
+  Python, point it at a newer one: `PYTHON=/opt/homebrew/bin/python3 ./run.sh install`)
 - **Your own copy** of the Pakon F-X35 COM Server installation, and your
-  scanner's firmware HEX
+  scanner's firmware HEX: `Pakon7.hex` for the F-135 and F-135 Plus (the OEM
+  package keeps it under `FX35Driver/`); the installer copies whatever `.hex`
+  files sit at the root of the source you give it, so check
+  `~/.local/share/psix/firmware/` has `Pakon7.hex` before the first launch
 - A Pakon F-135, and a USB cable that is not a phone charger cable
 
 ---
@@ -87,8 +92,8 @@ threads, MFC, the imaging pipeline, the window itself — is the real thing.
 ## Installing
 
 ```sh
-git clone https://github.com/<you>/pakon-f135-macos
-cd pakon-f135-macos
+git clone https://github.com/pablonavarrob/pakon-tlx-macos
+cd pakon-tlx-macos
 ./run.sh install
 ```
 
@@ -98,7 +103,7 @@ That is the whole thing. About a minute on a clean machine, and it does:
 |---|---|
 | 1 | `brew` installs `wine-stable`, `mingw-w64`, `libusb`, and builds a `.venv` in the repo |
 | 2 | creates the Wine prefix if there isn't one |
-| 3 | **downloads the OEM stack and your scanner's firmware** and puts them where the rest of the project expects them |
+| 3 | **downloads the OEM stack and your scanner's firmware** from a public archive and puts them where the rest of the project expects them (or copies them from a folder you already have: `./run.sh install --from <dir>`) |
 | 4 | cross-builds `pkusb.dll` |
 | 5 | registers the COM servers, patches the two imports, seeds the registry, creates the directories the OEM install is missing |
 
@@ -106,26 +111,51 @@ Then power on the scanner and `./run.sh`. On a fresh prefix do
 *Scan → Light Correction* with the gate empty once — that is the only step that
 needs the hardware, because it measures your unit.
 
-Nothing goes on your `PATH` and nothing is installed system-wide. Re-running
+Nothing goes on your `PATH`, and nothing of this project's is installed
+system-wide (Wine's own `gstreamer-runtime` dependency is a `.pkg` that puts a
+framework in `/Library/Frameworks` and asks for your password). Re-running
 `install` is safe: every step is idempotent and it will not overwrite an OEM
 stack you already have.
 
 #### Where the OEM files come from
 
-This repository contains no Kodak material and never will. `install` fetches it
-at your request from a public third-party archive of the F-X35 distribution,
-which is exactly what you would otherwise do by hand. Point it somewhere else if
-you prefer:
+This repository contains no Kodak material and never will. If you already have
+the F-X35 COM Server install (from your own Pakon CD or a working Windows
+machine), point `install` at it and nothing is downloaded:
 
 ```sh
-PAKON_OEM_URL=https://... ./run.sh install      # a different archive
-./run.sh install --from ~/my-own-copy           # a local copy you already have
+./run.sh install --from ~/my-own-copy           # a folder containing "F-X35 COM SERVER"
 ```
+
+Otherwise `install` fetches it at your request from a public third-party archive
+of the F-X35 distribution (by default
+`github.com/plonsker/pakon-scanning-software`, the `Pakon Update/fx35install`
+tree), which is exactly what you would otherwise do by hand:
+
+```sh
+./run.sh install                                # default archive
+PAKON_OEM_URL=https://... ./run.sh install      # a different archive
+```
+
+Note what that trusts: the fetch clones the archive's `master` branch by name
+and copies every `.dll`/`.ocx` it finds into the directory the OEM stack runs
+from, and those files then execute under Wine as you. If the archive changes,
+so does what runs. Nothing verifies the files: `setup/manifest.json` records
+the SHA-256 of each one from a known-good install, but the fetch only checks
+that they exist, and `./run.sh doctor` reports a mismatch without refusing to
+launch. Run `doctor` and read the hash column before the first launch, and
+prefer `--from` with a copy you already trust.
 
 The fetch is a blob-filtered sparse clone, so it pulls about 50 MB rather than
 the whole 279 MB archive. It is manifest-driven: the installer scatters the
 runtimes (`mfc71u`, `msvcr71`, `kodakcms`, `ekjpegi`, `xerces`) outside the
 application directory, and the fetch finds each file wherever it lives.
+With `--from`, it looks for the same runtimes at the root of the folder you
+give it and in a `System32/` beside it; if your copy keeps them elsewhere it
+says `still missing after the sweep: <file>` and you copy those few files into
+the install by hand. Firmware `.hex` files are taken from the root of the same
+folder; if yours live in a subdirectory (the installer puts them under
+`FX35Driver/`), copy `Pakon7.hex` into `~/.local/share/psix/firmware/` yourself.
 
 #### If something goes wrong
 
