@@ -210,8 +210,23 @@ fi
 if ! pgrep -f pakonusb.py >/dev/null; then
     echo "starting USB server..."
     ( cd "$HERE/server" && nohup "${PYTHON:-python3}" -u pakonusb.py > "$SRVLOG" 2>&1 < /dev/null & )
-    sleep 4
-    grep -q "serving" "$SRVLOG" || { echo "USB server failed:"; cat "$SRVLOG"; exit 1; }
+    # A cold scanner gets its firmware uploaded first, and re-enumeration after
+    # that takes several seconds, so wait for "serving" rather than a fixed sleep.
+    for _ in $(seq 1 30); do
+        grep -q "serving" "$SRVLOG" 2>/dev/null && break
+        pgrep -f pakonusb.py >/dev/null || break
+        sleep 0.5
+    done
+    if ! grep -q "serving" "$SRVLOG" 2>/dev/null; then
+        if pgrep -f pakonusb.py >/dev/null; then
+            echo "USB server is still starting (a firmware upload and re-enumeration"
+            echo "can take ~10 s). Its log so far:"; tail -8 "$SRVLOG"
+            echo "Run './run.sh' again in a moment, or './run.sh log' to watch it."
+        else
+            echo "USB server failed:"; cat "$SRVLOG"
+        fi
+        exit 1
+    fi
 fi
 echo "USB server: $(grep -c . "$SRVLOG") log lines, listening"
 
@@ -222,4 +237,5 @@ cd "$APP" || exit 1
 nohup "$WINE" TLXClientDemo.exe > "$CLILOG" 2>&1 < /dev/null &
 disown
 echo "TLX Client launching (log: $CLILOG)"
+echo "Its window opens behind the terminal: bring it forward from the Dock."
 echo "run './run.sh log' to see what it is doing, './run.sh stop' to stop."
