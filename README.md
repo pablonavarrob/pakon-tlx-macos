@@ -1,4 +1,6 @@
-# Pakon F-135 on macOS
+![alt text](https://github.com/pablonavarrob/pakon-tlx-macos/blob/main/docs/IMG_5001.png)
+
+---
 
 Run the **real Kodak TLX Client** — Kodak's own colour science and Digital ICE —
 against a Pakon F-135 on macOS, including Apple Silicon. No Windows VM.
