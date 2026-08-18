@@ -1,29 +1,34 @@
 #!/usr/bin/env python3
-"""Dump the scanner's EEPROM, READ ONLY, and look for the light calibration.
+"""Dump the scanner's per-unit EEPROM, READ ONLY, and verify it.
 
-Why this exists: a normal scan does not derive the LED currents and duty
-cycles.  The error chain the OEM prints is
+The chip (I2C 0x52 on the motherboard) holds the data that makes this unit
+this unit, written at the factory and by the Calibration Wizard: the serial
+number, the per-DpiBase optical offsets, motor speeds (normal and IR) and
+MotorAdjust words, and the 60 colour-matrix floats. It is irreplaceable. It
+does NOT hold the light calibration (LED currents and duty cycles): those live in the
+Windows registry, written by TLB itself when you run Light Correction, which
+is why a fresh install shows current=1 / duty=0 (see docs/PROTOCOL.md). This
+tool started life looking for them here; what it is good for is checking the
+chip.
 
-    FuncScanPictures -> bBeforeScan -> bCalibrateFindCorrections
+The data is stored twice (layout from the pakon-mac project's reading of
+TLB's FN_bReadEEPromToRegistry, https://github.com/gazzdingo/pakon-mac
+docs/69-calibration-auto-load.md, confirmed on hardware here). Two sections, each {u32 length; u32 crc32;
+payload}, CRC-32 (zlib) over the payload only:
 
-with no FindLedCurrent / FindLedDutyCycle in it -- those belong to the full
-Calibration Wizard.  So a scan LOADS the light settings, and TLB.dll loads them
-from the EEPROM (its CalibrateEEProm interface).  On this machine they come out
-as current=1 and duty=0, which is why the lamp is lit but produces nothing and
-calibration parks in "Corrections" for ever.
+    section A  0x0000  398 B   backup at 0x0400
+    section B  0x0800   36 B   backup at 0x0A00
 
-This reads exactly the region TLB.dll reads at init, decoded from a live
-capture of its own control transfers:
+TLB reads the primaries at init; the backups are Kodak's insurance. This
+reads all four, checks every CRC and compares each primary with its backup,
+so a flipped byte shows up as which byte, in which copy, and whether the
+other copy is good. The read sequence is exactly the one TLB uses, decoded
+from a live capture of its own control transfers.
 
-    0x0000   8 B    header
-    0x0008 - 0x018E 390 B   main calibration block  <- currents/duty live here
-    0x0800   8 B  + 0x0808  28 B
+THE EEPROM IS NEVER WRITTEN. Only the two known read opcodes are issued:
+0xA4 with wValue 0xA5 (read-select) and 0xA9 IN at a byte offset, <=32 B.
 
-THE EEPROM IS NEVER WRITTEN.  Only the two known read opcodes are issued:
-0xA4 with wValue 0xA5 (read-select) and 0xA9 IN.  It holds irreplaceable
-per-unit calibration.
-
-    ./.venv/bin/python eedump.py
+    ./.venv/bin/python tools/eedump.py
 """
 import os
 import struct
@@ -31,24 +36,78 @@ import sys
 
 import usb1
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "server"))
 import pakonload                                          # noqa: E402
 
 VID, PID_LOADED, PID_UNLOADED = 0x0F05, 0xF135, 0xF235
 EE_INDEX, EE_SETUP, EE_READ = 0x1234, 0xA4, 0xA9
 READ_SELECT = 0x00A5
-# (offset, length) exactly as TLB.dll asks for them
+# (offset, length) exactly as TLB.dll asks for them at init (the primaries)
 REGIONS = ([(0x0000, 8)] + [(0x0008 + 32 * i, 32) for i in range(13)]
            + [(0x0188, 6), (0x0800, 8), (0x0808, 28)])
+# Each section is {u32 length; u32 crc32; payload}; the backups sit 0x400 and
+# 0x200 above their primaries. Lengths are read from the headers, capped here.
+SECTIONS = (("A", 0x0000, 0x0400, 0x400), ("B", 0x0800, 0x0A00, 0x200))
 OUT = "/tmp/eeprom.bin"
 
 
 def read_eeprom(h):
     blocks = {}
     for off, n in REGIONS:
-        h.controlWrite(0x40, EE_SETUP, READ_SELECT, EE_INDEX, b"", timeout=2000)
-        blocks[off] = bytes(h.controlRead(0xC0, EE_READ, off, EE_INDEX, n, timeout=2000))
+        blocks[off] = read_region(h, off, n)
     return blocks
+
+
+def read_section(h, base, maxlen):
+    """One whole section by its own header: 8 B header, then the payload the
+    header says is there (capped), in <=32 B reads."""
+    import zlib
+    hdr = read_region(h, base, 8)
+    length, crc = struct.unpack("<II", hdr)
+    if not 8 < length <= maxlen:
+        return hdr, length, crc, None
+    data = bytearray(hdr)
+    off = base + 8
+    while off < base + length:
+        n = min(32, base + length - off)
+        data += read_region(h, off, n)
+        off += n
+    calc = zlib.crc32(bytes(data[8:length])) & 0xFFFFFFFF
+    return bytes(data), length, crc, calc
+
+
+def read_region(h, off, n):
+    h.controlWrite(0x40, EE_SETUP, READ_SELECT, EE_INDEX, b"", timeout=2000)
+    return bytes(h.controlRead(0xC0, EE_READ, off, EE_INDEX, n, timeout=2000))
+
+
+def verify(h):
+    """Read both copies of both sections, check the CRCs, compare the copies."""
+    print("\n=== sections and backups ===")
+    copies = {}
+    for name, prim, back, maxlen in SECTIONS:
+        for which, base in (("primary", prim), ("backup", back)):
+            data, length, crc, calc = read_section(h, base, maxlen)
+            copies[(name, which)] = data
+            if calc is None:
+                print("   %s %-7s @0x%03x  header len=%d -- implausible, skipped"
+                      % (name, which, base, length))
+                continue
+            print("   %s %-7s @0x%03x  len=%3d  crc stored 0x%08x  computed 0x%08x  %s"
+                  % (name, which, base, length, crc, calc,
+                     "ok" if crc == calc else "MISMATCH"))
+    for name, _p, _b, _m in SECTIONS:
+        a, b = copies.get((name, "primary")), copies.get((name, "backup"))
+        if a is None or b is None or len(a) < 8 or len(b) < 8:
+            continue
+        if a == b:
+            print("   %s primary == backup" % name)
+        else:
+            diffs = [i for i in range(min(len(a), len(b))) if a[i] != b[i]]
+            print("   %s primary != backup: %d byte(s) differ" % (name, len(diffs)))
+            for i in diffs[:8]:
+                print("      0x%03x  primary 0x%02x  backup 0x%02x" % (i, a[i], b[i]))
+    return copies
 
 
 def hexdump(off, data):
@@ -111,6 +170,7 @@ def main():
     h.claimInterface(0)
     try:
         blocks = read_eeprom(h)
+        copies = verify(h)
     finally:
         h.releaseInterface(0)
         h.close()
@@ -124,6 +184,12 @@ def main():
     with open(OUT, "wb") as f:
         f.write(main_block)
     print("\nwrote %d bytes to %s" % (len(main_block), OUT))
+    for (name, which), data in sorted(copies.items()):
+        path = OUT.replace(".bin", "_%s_%s.bin" % (name, which))
+        with open(path, "wb") as f:
+            f.write(data)
+    print("wrote the four section copies beside it as %s"
+          % OUT.replace(".bin", "_{A,B}_{primary,backup}.bin"))
     analyse(main_block, 0x0000)
 
 
