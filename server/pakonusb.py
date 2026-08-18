@@ -561,6 +561,17 @@ class Scanner:
 
     # ---------------- dispatch ----------------
     def __call__(self, code, data, outsz):
+        # After a failed reopen() the handle is None until the scanner is back
+        # on the bus.  Requests must not reach bulkWrite/controlRead with it:
+        # that raised AttributeError, which the USBError handler below does not
+        # catch, so every request after a lost device became a server traceback
+        # and a dropped client.  Try once to reopen (it may have returned), and
+        # otherwise answer with an error the client can act on.
+        if self.h is None:
+            if not self.reopen():
+                say(f"  no scanner: request 0x{code:08x} refused "
+                    "(power it on and plug it in; retrying on the next request)")
+                return None
         try:
             if code == READ_EP6:
                 return self.image(outsz)

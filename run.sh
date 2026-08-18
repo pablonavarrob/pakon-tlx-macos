@@ -205,6 +205,23 @@ if ! "$PYTHON" -c "import usb1" >/dev/null 2>&1; then
     echo "ok: $PYTHON"
 fi
 
+# 0c. the OEM client initialises the scanner the moment it starts and quits with
+#     WTO_InitializeError if there is none, so look for one first: cold
+#     (0f05:f235, firmware not yet loaded) or operational (0f05:f135) both count.
+scanner_present() {
+    "$PYTHON" -c 'import usb1,sys
+with usb1.USBContext() as c:
+    ok = any(d.getVendorID() == 0x0F05 and d.getProductID() in (0xF235, 0xF135)
+             for d in c.getDeviceList())
+sys.exit(0 if ok else 1)' 2>/dev/null
+}
+if ! scanner_present; then
+    echo "No scanner on the USB bus (neither 0f05:f235 nor 0f05:f135)."
+    echo "Power it on and plug it in, then run this again. The OEM client"
+    echo "initialises the scanner as it starts and quits if there is none."
+    exit 1
+fi
+
 # 1. the scanner needs application firmware after every power cycle (it lives in
 #    RAM).  pakonusb.py says so plainly if it is missing.
 if ! pgrep -f pakonusb.py >/dev/null; then
@@ -228,7 +245,16 @@ if ! pgrep -f pakonusb.py >/dev/null; then
         exit 1
     fi
 fi
-echo "USB server: $(grep -c . "$SRVLOG") log lines, listening"
+# Say what the bridge found, in this script's own words: its log lines are
+# written for someone running pakonusb.py by hand ("start the TLX client
+# now") and read oddly here, where run.sh launches the client itself.
+if grep -q "SUCCESS: scanner is now" "$SRVLOG" 2>/dev/null; then
+    echo "USB server up: firmware loaded, scanner is operational (0f05:f135)."
+elif grep -q "scanner open (0f05:f135)" "$SRVLOG" 2>/dev/null; then
+    echo "USB server up: scanner is operational (0f05:f135)."
+else
+    echo "USB server up ($(grep -c . "$SRVLOG") log lines)."
+fi
 
 # 2. the client, from the path the OEM installer would have used, because
 #    TLB.dll and PakonImau resolve Config/, Logs/ and the Ansel data from it.
