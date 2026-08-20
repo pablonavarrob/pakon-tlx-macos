@@ -134,8 +134,17 @@ DUMP_PATH = os.environ.get("PAKON_DUMP", "/tmp/ep6_dump.bin")   # first image re
 _T0 = time.time()
 
 
+_CAPTURE = [None]        # the open capture file, or None
+
+
 def say(m):
     print("%8.3f %s" % (time.time() - _T0, m), flush=True)
+    cap = _CAPTURE[0]
+    if cap is not None:
+        try:
+            cap.write('{"t":%.6f,"d":"log","msg":%s}\n' % (time.time(), json.dumps(m)))
+        except ValueError:
+            pass            # capture closed during shutdown
 
 
 def line_sync(head):
@@ -184,9 +193,38 @@ class Scanner:
         self.line_bytes = 0          # measured from the markers at align time
         self.served = False          # this transfer has delivered bytes to the OEM
         self.lastpoll = {}           # last response per poll target
+        # Research capture: every command and reply as timestamped JSON lines,
+        # enabled by PAKON_CAPTURE=<path>.  Image pixels, EEPROM contents and
+        # firmware are never written -- only markers with their sizes -- so a
+        # capture is safe to publish.
+        cap_path = os.environ.get("PAKON_CAPTURE")
+        if cap_path:
+            os.makedirs(os.path.dirname(cap_path) or ".", exist_ok=True)
+        self.capture = open(cap_path, "a", buffering=1) if cap_path else None
+        _CAPTURE[0] = self.capture
+        if self.capture is not None:
+            self.capture.write(
+                '{"d":"meta"'
+                ',"t":%.6f' % time.time() +
+                ',"label":%s' % json.dumps(os.environ.get("PAKON_CAPTURE_LABEL", "")) +
+                ',"bridge":"pakon-tlx-macos with the capture-logging patch"'
+                ',"clock":"host wall clock, time.time()"'
+                ',"scope":"USB application traffic; driver-shim internals and'
+                ' image-ring mechanics are not part of the record"'
+                ',"streams":{"cmd":"PPB command the OEM stack sent, hex"'
+                ',"cmd_mod":"what reached the scanner when the LED clamp changed'
+                ' the command; absent otherwise"'
+                ',"rsp":"the scanner reply, hex"'
+                ',"ep0":"control transfer, setup fields and length; payload'
+                ' omitted (EEPROM contents are per-unit); blocked:true if refused"'
+                ',"ep6":"image-data transfer, byte count only, pixels omitted"'
+                ',"fw":"marker: firmware upload happened here, bytes omitted"'
+                ',"log":"the bridge\'s own narration, for context"}}\n')
 
     def open(self):
         self.h = self.ctx.openByVendorIDAndProductID(VID, PID_LOADED)
+        if self.h is not None:
+            say("scanner already has application firmware (warm start)")
         if self.h is None:
             # Firmware lives in RAM, so it is gone after every power cycle.
             # Upload it here rather than making the user run a second tool.
@@ -195,7 +233,12 @@ class Scanner:
                 raise SystemExit(f"No scanner {VID:04x}:{PID_LOADED:04x} on the bus. "
                                  "Powered on and plugged in?")
             probe.close()
-            say("scanner has no application firmware -- uploading it")
+            say("scanner has no application firmware -- uploading it (cold start)")
+            if self.capture is not None:
+                self.capture.write(
+                    '{"t":%.6f,"d":"fw","note":"application firmware uploaded'
+                    ' over EP0 here; bytes omitted (Kodak firmware, never'
+                    ' published)"}\n' % time.time())
             self.ctx.close()
             pakonload.load_firmware(log=lambda m: say(f"  fw: {m}"))
             self.ctx = usb1.USBContext()
@@ -306,8 +349,14 @@ class Scanner:
 
     def cmd(self, pkt, outsz):
         pkt = bytearray(pkt)
+        cap = self.capture
+        if cap is not None:
+            cap.write('{"t":%.6f,"d":"cmd","hex":"%s"}\n' % (time.time(), bytes(pkt).hex()))
+        original = bytes(pkt)
         self.watch_bootloader(pkt)
         pkt = self.clamp_leds(pkt)
+        if cap is not None and bytes(pkt) != original:
+            cap.write('{"t":%.6f,"d":"cmd_mod","hex":"%s"}\n' % (time.time(), bytes(pkt).hex()))
         self.lastcmd = time.time()
         _picm, picl = ppb.board()
         trigger = (len(pkt) >= 5 and pkt[0] == 2 and pkt[2] == picl
@@ -315,6 +364,8 @@ class Scanner:
         with self.lock:
             self.h.bulkWrite(EP_CMD_OUT, bytes(pkt), timeout=3000)
             r = bytes(self.h.bulkRead(EP_CMD_IN, RESP_MAX, timeout=3000))
+        if cap is not None:
+            cap.write('{"t":%.6f,"d":"rsp","hex":"%s"}\n' % (time.time(), r.hex()))
         if trigger:
             self.arm_stream()
         return r[:outsz] if outsz else r
@@ -396,6 +447,10 @@ class Scanner:
         val, idx = struct.unpack_from("<HH", data, 6)
         if not self.allowed(req, val, idx, direction):
             self.blocked.append((req, val, idx))
+            if self.capture is not None:
+                self.capture.write(
+                    '{"t":%.6f,"d":"ep0","req":%d,"wValue":%d,"wIndex":%d,"dir":"%s","blocked":true}\n'
+                    % (time.time(), req, val, idx, "in" if direction else "out"))
             say(f"  !! BLOCKED control req=0x{req:02x} wValue=0x{val:04x} "
                 f"wIndex=0x{idx:04x} -- would touch the EEPROM")
             return None
@@ -404,9 +459,15 @@ class Scanner:
               | (recip & 0x1F))
         with self.lock:
             if direction:
-                return bytes(self.h.controlRead(bm, req, val, idx, outsz, timeout=3000))
-            self.h.controlWrite(bm, req, val, idx, b"", timeout=3000)
-        return b""
+                out = bytes(self.h.controlRead(bm, req, val, idx, outsz, timeout=3000))
+            else:
+                self.h.controlWrite(bm, req, val, idx, b"", timeout=3000)
+                out = b""
+        if self.capture is not None:
+            self.capture.write(
+                '{"t":%.6f,"d":"ep0","req":%d,"wValue":%d,"wIndex":%d,"dir":"%s","n":%d}\n'
+                % (time.time(), req, val, idx, "in" if direction else "out", len(out)))
+        return out
 
     # ---------------- image stream (EP 0x86) ----------------
     # The scanner streams continuously once a scan starts; if we only read when
@@ -438,6 +499,8 @@ class Scanner:
                         if len(self.imgbuf) < MAX_BUF:
                             self.imgbuf.extend(transfer.getBuffer()[:n])
                         self.imgtotal += n
+                    if self.capture is not None:
+                        self.capture.write('{"t":%.6f,"d":"ep6","n":%d}\n' % (time.time(), n))
             if self.reading:
                 try:
                     transfer.submit()
