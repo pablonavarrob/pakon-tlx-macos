@@ -8,6 +8,7 @@ run() { echo "--- $1"; shift; "$@" || fail=1; }
 run "PPB decoder"        $PY "$ROOT/server/ppb.py"
 run "TLB name tables"    $PY "$ROOT/server/pknames.py"
 run "USB server logic"   $PY "$ROOT/server/pakonusb.py" --selftest
+run "DX synthesiser"     $PY "$ROOT/server/dxsynth.py" --selftest
 run "line-sync analysis" $PY "$ROOT/tools/framing.py" --selftest
 run "registry scan"      $PY "$ROOT/setup/regscan.py" --selftest
 echo "--- ring protocol (needs wine + mingw)"
