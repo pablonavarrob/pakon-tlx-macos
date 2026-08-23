@@ -34,6 +34,25 @@ import os
 import struct
 import sys
 
+# python-libusb1's dylib search list misses Intel Homebrew's
+# /usr/local/opt/libusb/lib (it only checks the Apple Silicon path), and
+# DYLD_LIBRARY_PATH set after the process has started is too late for dyld to
+# see -- so if it's not already pointed at libusb, relaunch once with it set.
+# run.sh does this for the server; this tool is invoked directly, so it has
+# to do it itself.
+if sys.platform == "darwin" and "_PAKON_LIBUSB_REEXEC" not in os.environ:
+    import subprocess
+    try:
+        prefix = subprocess.run(["brew", "--prefix", "libusb"], capture_output=True,
+                                 text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        prefix = ""
+    if prefix:
+        os.environ["_PAKON_LIBUSB_REEXEC"] = "1"
+        existing = os.environ.get("DYLD_LIBRARY_PATH", "")
+        os.environ["DYLD_LIBRARY_PATH"] = f"{prefix}/lib" + (f":{existing}" if existing else "")
+        os.execve(sys.executable, [sys.executable] + sys.argv, os.environ)
+
 import usb1
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "server"))
