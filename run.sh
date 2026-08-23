@@ -23,6 +23,10 @@ export MVK_CONFIG_LOG_LEVEL=0
 # TLB error tracing patches OEM code in memory: opt in explicitly.
 #   PAKON_ERRHOOK=1 ./run.sh
 export PAKON_ERRHOOK="${PAKON_ERRHOOK:-0}"
+# python-libusb1's dylib search list misses Intel Homebrew's /usr/local/opt/libusb/lib
+# (it only checks the Apple Silicon path) -- point it there directly so it isn't needed.
+LIBUSB_PREFIX="$(brew --prefix libusb 2>/dev/null || true)"
+[ -n "$LIBUSB_PREFIX" ] && export DYLD_LIBRARY_PATH="$LIBUSB_PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 APP="${PAKON_INSTALL:-$WINEPREFIX/drive_c/Program Files/Pakon/F-X35 COM Server}"
 SRVLOG="${PAKON_SRVLOG:-/tmp/pakonusb.log}"
 CLILOG="${PAKON_CLILOG:-/tmp/tlxclient.log}"
