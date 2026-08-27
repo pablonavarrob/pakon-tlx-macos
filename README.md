@@ -189,6 +189,10 @@ All of this is the OEM software's behaviour, not this project's.
 
 ### Client settings
 
+- **Positive and B&W are available.** The client greys out those three modes
+  when a capability bit is clear. This project makes them selectable again at
+  load. [docs/FILM-MODES.md](docs/FILM-MODES.md) has the detail, and records
+  what has not been confirmed.
 - **Digital ICE is a scan-time setting.** *Scratch Removal* in the Scan dialog
   turns the IR LED on. Ticking it at save time does nothing — the IR channel was
   never captured. `LED CURRENT ... IR=0` in the trace means no ICE.
