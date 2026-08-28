@@ -183,6 +183,12 @@ All of this is the OEM software's behaviour, not this project's.
   mid-strip and the save stage then discards the whole roll with
   `EC_FilmInGuides (129)`. You scan it and get nothing. `MaxFilmLength` can only
   be raised through an API the demo client never calls.
+- **Every frame labelled `DX_Error`, and Save writes one file for the whole
+  strip.** The DX edge code was not read: either the film has none (Vision3
+  and other cine stock, much B&W) or the scanner's DX sensor is bad. Instead of
+  renumbering by hand, `docs/DX-OVERRIDE.md` describes an opt-in **DX override**
+  that supplies the film code and frame numbers from a config file
+  (`docs/dx-override.conf.example`).
 - **Gate empty when you press Scan.** Feeding first is how you jam it.
 - If it jams: stop the client, advance the film out by hand, don't pull against
   the drive.

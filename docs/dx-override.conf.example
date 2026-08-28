@@ -1,0 +1,100 @@
+# DX override: override the values detected from the film edge DX code.
+#
+# Useful if your scanner's DX sensor is faulty, or if the film's edge carries
+# no barcode at all: motion-picture stock respooled into cassettes (Vision3
+# and its kin carry KEYKODE edge markings instead) is the clear case, and
+# whether any given still film has one is a property of that emulsion.
+#
+# The edge barcode is a latent image on the film, not the DX contacts on the
+# cassette that a camera reads.  For its structure, see
+# https://github.com/alibosworth/35mm-dx-edge-code
+#
+# 35 mm film carries this barcode along its edge; the scanner reads it with a
+# dedicated sensor and the OEM engine uses it for the film type (which picks
+# the ISO and film-specific processing) and the frame numbers (which become
+# the frame labels and the saved filenames).  With no code to read, every
+# frame is labelled DX_Error and saving a roll writes one file, because every
+# default filename is identical.
+#
+# This file supplies those values by hand instead.  The server rewrites the
+# scanner's sensor replies on their way to the OEM engine, in the format a
+# working sensor would have produced.  Nothing is ever sent to the scanner and
+# no OEM binary is modified; delete or rename this file and the next scan is
+# passed through untouched.
+#
+# Copy to ~/.local/share/psix/dx-override.conf (or wherever PAKON_DX_CONFIG
+# points).
+# It is re-read at the start of every scan, so edit and rescan; no restart.
+#
+# Syntax: key = value, one per line.  # starts a comment.  Every setting below
+# has a working default: an empty file numbers the frames from 1.
+
+
+# -------------------------------------------------------- the frame numbers --
+
+# Supply the frame numbers.  This is the main switch.  Set it to `no` to leave
+# the frame labels to the client and use this file only for the film type.
+override_numbers = yes
+
+# The label of the scan's first frame: 1, 5, 12A.  Set it to the number
+# printed on the film next to the first frame of the strip you are scanning.
+#
+# Codes are emitted every half frame, as they are on real film, so the labels
+# run 1, 1A, 2, 2A ... and your pictures, being a full frame apart, take every
+# second one.  Starting at 1 gives pictures 1, 2, 3; starting at 1A gives
+# 1A, 2A, 3A.
+#
+# Frames carry on across the strips of one scan (strip 1 -> 1..4, strip 2 ->
+# 5..8): the transport does not stop between them, so they are consecutive
+# pieces of one roll, which is what a binder page holds after a whole roll is
+# scanned and cut.  Stopping the scan resets to this number again, which is
+# what happens between rolls.
+start = 1
+
+
+# ---------------------------------------------------------------- the film --
+#
+# Optional, and all or nothing: set both or neither.  These two numbers are
+# the DX code itself: part 1 (product, 0..127) and part 2 (generation,
+# 0..15).  The OEM's lookup table turns the pair into a film identity and an
+# ISO.  79/11 is a generic Kodak entry giving ISO 160.  The table was last
+# revised in 2006, so films newer than that have no entry; pick the closest
+# match at the right speed.  To look up what a film encodes:
+# https://thebigfilmdatabase.merinorus.com
+#
+# The client cannot be told the film type: its product and specifier fields are
+# read-only, showing what the DX code reported.  So this file is the only way
+# to supply one, and leaving it out means the engine gets product 0 /
+# generation 0, an unallocated code, and falls back to its default processing
+# exactly as it does when no code is read at all.  Set these if you want
+# film-specific processing; leave them out to use this file for frame numbers
+# alone.
+
+product = 79
+generation = 11
+
+
+# ------------------------------------------------------------------ tuning --
+#
+# Defaults are correct on the reference unit; change only to chase a specific
+# symptom, one at a time, and read the engine's own table to see the effect
+# (DxCreateDebugFiles = 1 in the registry, then Logs/DxCode.txt after a scan).
+
+# Position counts per frame.  Normally nothing to set: the scan trigger the
+# OEM software sends names the configuration, and the module reads the pitch
+# and lead from that, so both follow the resolution and the Digital ICE
+# setting by themselves.  Set `pitch` (and `lead`, in half-frames) only to
+# override that, or if the log says the trigger carried a value not in the
+# module's table.
+# pitch = 2405
+# lead = 0
+
+# Where the film's leading edge is reported, in positions before the first
+# code.  The engine needs a film start recorded or it will not number at all;
+# 0 puts it at the first code, which was accurate enough on a 4-frame strip.
+# Raise it if the engine places codes onto the wrong pictures.
+# film_lead = 0
+
+# Which flag value marks a half-frame ("A") code.  If every label comes out
+# exactly one frame off, swap this.
+# a_flag = 1

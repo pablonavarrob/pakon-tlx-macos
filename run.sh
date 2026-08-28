@@ -29,6 +29,12 @@ LIBUSB_PREFIX="$(brew --prefix libusb 2>/dev/null || true)"
 [ -n "$LIBUSB_PREFIX" ] && export DYLD_LIBRARY_PATH="$LIBUSB_PREFIX/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 APP="${PAKON_INSTALL:-$WINEPREFIX/drive_c/Program Files/Pakon/F-X35 COM Server}"
 SRVLOG="${PAKON_SRVLOG:-/tmp/pakonusb.log}"
+# Opt-in for research: uncomment the next line (or export PAKON_SRVLOG_DIR)
+# to also keep every session's server log there, dated.  Labelled command
+# streams (motor rate, geometry writes, 0x91 payload per configuration) are
+# otherwise lost at each restart, since /tmp/pakonusb.log is overwritten.
+#PAKON_SRVLOG_DIR="$HOME/.local/share/psix/logs"
+SRVLOG_DIR="${PAKON_SRVLOG_DIR:-}"
 CLILOG="${PAKON_CLILOG:-/tmp/tlxclient.log}"
 
 # A repo-local .venv is used if it has the libusb1 binding; PYTHON overrides.
@@ -230,7 +236,14 @@ fi
 #    RAM).  pakonusb.py says so plainly if it is missing.
 if ! pgrep -f pakonusb.py >/dev/null; then
     echo "starting USB server..."
-    ( cd "$HERE/server" && nohup "${PYTHON:-python3}" -u pakonusb.py > "$SRVLOG" 2>&1 < /dev/null & )
+    if [ -n "$SRVLOG_DIR" ]; then
+        mkdir -p "$SRVLOG_DIR"
+        SRVLOG_KEEP="$SRVLOG_DIR/pakonusb-$(date +%Y%m%d-%H%M%S).log"
+        echo "server log kept at $SRVLOG_KEEP"
+        ( cd "$HERE/server" && nohup "${PYTHON:-python3}" -u pakonusb.py 2>&1 < /dev/null | tee "$SRVLOG_KEEP" > "$SRVLOG" & )
+    else
+        ( cd "$HERE/server" && nohup "${PYTHON:-python3}" -u pakonusb.py > "$SRVLOG" 2>&1 < /dev/null & )
+    fi
     # A cold scanner gets its firmware uploaded first, and re-enumeration after
     # that takes several seconds, so wait for "serving" rather than a fixed sleep.
     for _ in $(seq 1 30); do

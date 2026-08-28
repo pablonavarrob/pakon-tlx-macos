@@ -52,6 +52,7 @@ except ImportError:
         raise
     pakonload = None
 import ppb                                                # noqa: E402
+import dxsynth                                            # noqa: E402
 
 VID, PID_LOADED, PID_UNLOADED = 0x0F05, 0xF135, 0xF235
 EP_CMD_OUT, EP_CMD_IN, EP_IMG_IN = 0x01, 0x81, 0x86
@@ -138,6 +139,11 @@ def say(m):
     print("%8.3f %s" % (time.time() - _T0, m), flush=True)
 
 
+def is_sensor_read(pkt, picl):
+    return (len(pkt) >= 5 and pkt[0] == 1 and pkt[2] == picl
+            and pkt[4] == dxsynth.REG_READ_SENSOR)
+
+
 def line_sync(head):
     """(phase, period) of the line-sync markers, in samples, or (None, None).
 
@@ -184,6 +190,8 @@ class Scanner:
         self.line_bytes = 0          # measured from the markers at align time
         self.served = False          # this transfer has delivered bytes to the OEM
         self.lastpoll = {}           # last response per poll target
+        self.dx = dxsynth.DxSynth(say)   # dead-DX-sensor stand-in; inert
+                                     # unless its config file exists
 
     def open(self):
         self.h = self.ctx.openByVendorIDAndProductID(VID, PID_LOADED)
@@ -272,6 +280,9 @@ class Scanner:
         ceilings.  PICL reg 0x80: bit0 visible, bit1 IR."""
         if len(p) >= 6 and p[0] == 2 and p[4] == LAMP_REG and p[2] == ppb.board()[1]:
             self.ir_on = bool(p[5] & 0x02)
+            dx = getattr(self, "dx", None)          # absent in test doubles
+            if dx is not None:
+                dx.ir_on = self.ir_on               # the override sizes the pitch by it
 
     def watch_bootloader(self, p):
         """Report -- do NOT block -- a write aimed at a PIC bootloader address.
@@ -309,14 +320,19 @@ class Scanner:
         self.watch_bootloader(pkt)
         pkt = self.clamp_leds(pkt)
         self.lastcmd = time.time()
-        _picm, picl = ppb.board()
+        picm, picl = ppb.board()
         trigger = (len(pkt) >= 5 and pkt[0] == 2 and pkt[2] == picl
                    and pkt[4] == REG_TRIGGER)
+        self.dx.on_command(pkt, picl, picm)
         with self.lock:
             self.h.bulkWrite(EP_CMD_OUT, bytes(pkt), timeout=3000)
             r = bytes(self.h.bulkRead(EP_CMD_IN, RESP_MAX, timeout=3000))
         if trigger:
             self.arm_stream()
+        try:
+            r = self.dx.on_response(pkt, r, picl)   # READ_SENSOR only, see dxsynth
+        except Exception as e:      # noqa: BLE001 -- a synth bug must not sever the link
+            self.dx.say(f"  DX: synth error, reply passed through unmodified: {e!r}")
         return r[:outsz] if outsz else r
 
     def arm_stream(self):
@@ -356,6 +372,21 @@ class Scanner:
                         del self.imgbuf[:ALIGN_SCAN]       # none here, keep going
                     else:
                         self.line_bytes = period * 2
+                        dx = getattr(self, "dx", None)      # absent in test doubles
+                        if dx is not None:
+                            dx.line_bytes = self.line_bytes
+                            dx.line_bytes_ir = self.ir_on   # what it means depends on it
+                        # Recorded for the DX override: the working frame
+                        # pitch at each resolution is proportional to the scan
+                        # width (1603 / 2405 / 3206 counts against widths of
+                        # 1000 / 1500 / 2000), and the width is this divided
+                        # by two bytes per sample and the channel count, which
+                        # is 3 or 4 depending on Digital ICE.  Logged so the
+                        # constant can be checked against a known resolution
+                        # before anything derives the pitch from it.
+                        say(f"  line size {self.line_bytes} bytes"
+                            f" -> width {self.line_bytes // 6} px at 3 channels,"
+                            f" {self.line_bytes // 8} at 4")
                         del self.imgbuf[:phase * 2]
                         return phase * 2
             time.sleep(0.001)
@@ -750,8 +781,29 @@ def handle(conn, dev):
             say(f"  {dev.n:6d} {txt}" + ("  FAIL" if out is None else ""))
 
 
+def _module_stamp():
+    """Which build of the server is actually running.
+
+    Several results in testing were void because a scan ran against the
+    module the previous server had loaded: code changes need a restart, while
+    config changes do not, and nothing in the log said which was which.
+    """
+    import hashlib
+    parts = []
+    for mod in (__file__, dxsynth.__file__):
+        try:
+            with open(mod, "rb") as fh:
+                digest = hashlib.sha256(fh.read()).hexdigest()[:8]
+            stamp = time.strftime("%H:%M", time.localtime(os.path.getmtime(mod)))
+            parts.append(f"{os.path.basename(mod)} {digest} ({stamp})")
+        except OSError:
+            parts.append(f"{os.path.basename(mod)} unreadable")
+    return "  ".join(parts)
+
+
 def main():
     dev = Scanner().open()
+    say(f"running {_module_stamp()}")
     say(f"scanner open ({VID:04x}:{PID_LOADED:04x})")
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
