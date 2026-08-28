@@ -27,6 +27,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "pkunlock.h"
 
 #define PORT 5140
 #define PK_HANDLE ((HANDLE)0xD0D0D000)
@@ -596,8 +597,59 @@ static int already(HMODULE m) {
     return 1;
 }
 
+/* Re-enable the film modes the client greys out: one byte per site turns the
+   conditional jump that disables them into an unconditional one.  Only ever
+   where the whole instruction pattern matches.  See pkunlock.h. */
+static void unlock_film_modes(void) {
+    static int done = 0;
+    unsigned char *base;
+    IMAGE_DOS_HEADER *dos;
+    IMAGE_NT_HEADERS *nt;
+    unsigned int size, i;
+
+    if (done) return;
+    done = 1;
+    if (getenv("PAKON_NO_FILM_UNLOCK")) {
+        logf_("pkusb: film unlock disabled by PAKON_NO_FILM_UNLOCK\n");
+        return;
+    }
+    base = (unsigned char *)GetModuleHandleA(NULL);   /* the EXE, not a DLL */
+    if (!base) return;
+    dos = (IMAGE_DOS_HEADER *)base;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+    size = nt->OptionalHeader.SizeOfImage;            /* bounds every read */
+
+    for (i = 0; i < PK_UNLOCK_NSITES; i++) {
+        const struct pk_unlock_site *s = &PK_UNLOCK_SITES[i];
+        DWORD old;
+        int state = pk_unlock_state(base, size, s);
+        if (state == PK_UNLOCK_NOMATCH) {
+            logf_("pkusb: film unlock: %s -- the expected code is not at RVA 0x%x"
+                  " in this build; left alone\n", s->unlocks, s->rva);
+            continue;
+        }
+        if (state == PK_UNLOCK_DONE) {
+            logf_("pkusb: film unlock: %s already unlocked\n", s->unlocks);
+            continue;
+        }
+        if (!VirtualProtect(base + s->rva, 1, PAGE_EXECUTE_READWRITE, &old)) {
+            logf_("pkusb: film unlock: %s -- VirtualProtect failed (err %lu)\n",
+                  s->unlocks, GetLastError());
+            continue;
+        }
+        if (pk_unlock_apply(base, size, s))
+            logf_("pkusb: film unlock: %s enabled (RVA 0x%x, jne -> jmp)\n",
+                  s->unlocks, s->rva);
+        VirtualProtect(base + s->rva, 1, old, &old);
+        FlushInstructionCache(GetCurrentProcess(), base + s->rva, 1);
+    }
+}
+
 static void install(void) {
     unsigned i;
+    unlock_film_modes();            /* the EXE is loaded before we are */
     for (i = 0; i < sizeof TARGETS / sizeof TARGETS[0]; i++) {
         HMODULE m = GetModuleHandleA(TARGETS[i]);
         int n = 0;
