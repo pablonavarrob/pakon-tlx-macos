@@ -288,6 +288,8 @@ All of this is the OEM software's behaviour, not this project's.
 | `PAKON_WINE` | path to the wine binary |
 | `PAKON_INSTALL` | the OEM install directory |
 | `PSIX_FIRMWARE_DIR` | where your `Pakon7.hex` lives |
+| `PAKON_CAPTURE` | path for a JSON-lines capture of every command and reply (see below) |
+| `PAKON_CAPTURE_LABEL` | a label recorded in the capture's first line |
 | `PAKON_ERRHOOK=1` | hook TLB's internal error reporter (patches OEM code in memory) |
 | `PYTHON` | interpreter for the bridge |
 
