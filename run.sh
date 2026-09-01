@@ -240,7 +240,13 @@ if ! pgrep -f pakonusb.py >/dev/null; then
         mkdir -p "$SRVLOG_DIR"
         SRVLOG_KEEP="$SRVLOG_DIR/pakonusb-$(date +%Y%m%d-%H%M%S).log"
         echo "server log kept at $SRVLOG_KEEP"
-        ( cd "$HERE/server" && nohup "${PYTHON:-python3}" -u pakonusb.py 2>&1 < /dev/null | tee "$SRVLOG_KEEP" > "$SRVLOG" & )
+        # nohup must cover the WHOLE pipeline, not just python: with `nohup py |
+        # tee`, closing the terminal SIGHUPs tee, python then dies on SIGPIPE,
+        # and the bridge goes down with the window.  nohup on the subshell makes
+        # both ignore it, since the disposition is inherited.
+        ( cd "$HERE/server" && nohup sh -c \
+            '"$1" -u pakonusb.py 2>&1 | tee "$2" > "$3"' \
+            _ "${PYTHON:-python3}" "$SRVLOG_KEEP" "$SRVLOG" < /dev/null & )
     else
         ( cd "$HERE/server" && nohup "${PYTHON:-python3}" -u pakonusb.py > "$SRVLOG" 2>&1 < /dev/null & )
     fi
