@@ -30,6 +30,7 @@ DEVICE SAFETY -- enforced here because this is the only place it can be:
     ./.venv/bin/python pakonusb.py
 """
 import collections
+import json
 import os
 import socket
 import struct
@@ -134,9 +135,19 @@ DUMP_PATH = os.environ.get("PAKON_DUMP", "/tmp/ep6_dump.bin")   # first image re
 
 _T0 = time.time()
 
+# The open capture file, or None.  A module global because say() has to reach it
+# and say() is called from everywhere, including before any Scanner exists.
+_CAPTURE = [None]
+
 
 def say(m):
     print("%8.3f %s" % (time.time() - _T0, m), flush=True)
+    cap = _CAPTURE[0]
+    if cap is not None:
+        try:
+            cap.write('{"t":%.6f,"d":"log","msg":%s}\n' % (time.time(), json.dumps(m)))
+        except ValueError:
+            pass            # capture closed during shutdown
 
 
 def is_sensor_read(pkt, picl):
@@ -192,6 +203,37 @@ class Scanner:
         self.lastpoll = {}           # last response per poll target
         self.dx = dxsynth.DxSynth(say)   # dead-DX-sensor stand-in; inert
                                      # unless its config file exists
+        # Research capture: every command and reply as timestamped JSON lines,
+        # enabled by PAKON_CAPTURE=<path>.  Image pixels, EEPROM contents and
+        # firmware are never written -- only markers with their sizes -- so a
+        # capture is safe to publish.
+        cap_path = os.environ.get("PAKON_CAPTURE")
+        if cap_path:
+            os.makedirs(os.path.dirname(cap_path) or ".", exist_ok=True)
+        self.capture = open(cap_path, "a", buffering=1) if cap_path else None
+        _CAPTURE[0] = self.capture
+        if self.capture is not None:
+            self.capture.write(json.dumps({
+                "d": "meta",
+                "t": time.time(),
+                "label": os.environ.get("PAKON_CAPTURE_LABEL", ""),
+                "bridge": "pakon-tlx-macos",
+                "clock": "host wall clock, time.time()",
+                "scope": "USB application traffic; driver-shim internals and"
+                         " image-ring mechanics are not part of the record",
+                "streams": {
+                    "cmd": "PPB command the OEM stack sent, hex",
+                    "cmd_mod": "what reached the scanner when the LED clamp"
+                               " changed the command; absent otherwise",
+                    "rsp": "the scanner reply, hex",
+                    "ep0": "control transfer, setup fields and length; payload"
+                           " omitted (EEPROM contents are per-unit);"
+                           " blocked:true if refused",
+                    "ep6": "image-data transfer, byte count only, pixels omitted",
+                    "fw": "marker: firmware upload happened here, bytes omitted",
+                    "log": "the bridge's own narration, for context",
+                },
+            }) + "\n")
 
     def open(self):
         self.h = self.ctx.openByVendorIDAndProductID(VID, PID_LOADED)
@@ -204,6 +246,8 @@ class Scanner:
                                  "Powered on and plugged in?")
             probe.close()
             say("scanner has no application firmware -- uploading it")
+            self.cap_write({"d": "fw", "note": "application firmware uploaded over"
+                                               " EP0 here; bytes omitted"})
             self.ctx.close()
             pakonload.load_firmware(log=lambda m: say(f"  fw: {m}"))
             self.ctx = usb1.USBContext()
@@ -264,6 +308,18 @@ class Scanner:
             self.ctx.close()
 
     # ---------------- command channel ----------------
+    def cap_write(self, obj):
+        """One JSON line into the capture, if one is open.  Never raises: a
+        diagnostic must not be able to break a scan."""
+        cap = self.capture
+        if cap is None:
+            return
+        try:
+            obj.setdefault("t", time.time())
+            cap.write(json.dumps(obj) + "\n")
+        except (ValueError, TypeError, OSError):
+            pass
+
     def led_ceilings(self):
         """The row of the firmware's ceiling table that applies right now.
 
@@ -317,8 +373,12 @@ class Scanner:
 
     def cmd(self, pkt, outsz):
         pkt = bytearray(pkt)
+        self.cap_write({"d": "cmd", "hex": bytes(pkt).hex()})
+        original = bytes(pkt)
         self.watch_bootloader(pkt)
         pkt = self.clamp_leds(pkt)
+        if bytes(pkt) != original:
+            self.cap_write({"d": "cmd_mod", "hex": bytes(pkt).hex()})
         self.lastcmd = time.time()
         picm, picl = ppb.board()
         trigger = (len(pkt) >= 5 and pkt[0] == 2 and pkt[2] == picl
@@ -327,6 +387,7 @@ class Scanner:
         with self.lock:
             self.h.bulkWrite(EP_CMD_OUT, bytes(pkt), timeout=3000)
             r = bytes(self.h.bulkRead(EP_CMD_IN, RESP_MAX, timeout=3000))
+        self.cap_write({"d": "rsp", "hex": r.hex()})
         if trigger:
             self.arm_stream()
         try:
@@ -427,6 +488,8 @@ class Scanner:
         val, idx = struct.unpack_from("<HH", data, 6)
         if not self.allowed(req, val, idx, direction):
             self.blocked.append((req, val, idx))
+            self.cap_write({"d": "ep0", "req": req, "wValue": val, "wIndex": idx,
+                            "dir": "in" if direction else "out", "blocked": True})
             say(f"  !! BLOCKED control req=0x{req:02x} wValue=0x{val:04x} "
                 f"wIndex=0x{idx:04x} -- would touch the EEPROM")
             return None
@@ -435,9 +498,13 @@ class Scanner:
               | (recip & 0x1F))
         with self.lock:
             if direction:
-                return bytes(self.h.controlRead(bm, req, val, idx, outsz, timeout=3000))
-            self.h.controlWrite(bm, req, val, idx, b"", timeout=3000)
-        return b""
+                out = bytes(self.h.controlRead(bm, req, val, idx, outsz, timeout=3000))
+            else:
+                self.h.controlWrite(bm, req, val, idx, b"", timeout=3000)
+                out = b""
+        self.cap_write({"d": "ep0", "req": req, "wValue": val, "wIndex": idx,
+                        "dir": "in" if direction else "out", "n": len(out)})
+        return out
 
     # ---------------- image stream (EP 0x86) ----------------
     # The scanner streams continuously once a scan starts; if we only read when
@@ -469,6 +536,7 @@ class Scanner:
                         if len(self.imgbuf) < MAX_BUF:
                             self.imgbuf.extend(transfer.getBuffer()[:n])
                         self.imgtotal += n
+                    self.cap_write({"d": "ep6", "n": n})
             if self.reading:
                 try:
                     transfer.submit()
@@ -942,6 +1010,31 @@ def selftest():
     assert ppb.board() == before, (ppb.board(), before)
     ppb.note_address(0x26)
     assert ppb.board() == before
+
+    # The capture must actually WRITE when enabled.  This exists because the
+    # first version of this feature called json.dumps() without importing json,
+    # so every capture file was created and then left empty -- and the whole
+    # suite still passed, because nothing here had ever switched it on.
+    import tempfile
+    capdir = tempfile.mkdtemp()
+    cappath = os.path.join(capdir, "cap.jsonl")
+    d.capture = open(cappath, "a", buffering=1)
+    _CAPTURE[0] = d.capture
+    say("capture selftest")
+    d.cap_write({"d": "cmd", "hex": "0203100180"})
+    d.cap_write({"d": "ep0", "req": 0xA9, "wValue": 0, "wIndex": 0x1234, "dir": "in", "n": 32})
+    d.capture.close()
+    _CAPTURE[0] = None
+    lines = [json.loads(x) for x in open(cappath) if x.strip()]
+    kinds = [x["d"] for x in lines]
+    assert "log" in kinds, kinds          # say() must reach the capture
+    assert "cmd" in kinds and "ep0" in kinds, kinds
+    assert all("t" in x for x in lines), lines
+    # nothing that could leak a payload
+    assert not any("payload" in x or "data" in x for x in lines), lines
+    d.capture = None
+    import shutil; shutil.rmtree(capdir, ignore_errors=True)
+    print("  capture selftest OK (%d lines)" % len(lines))
 
     # begin_read must NEVER discard buffered data: a gap between reads only
     # means the consumer was behind, and dropping there caused EC_DRV_LostSync.
